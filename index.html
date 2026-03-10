@@ -261,4 +261,338 @@ function App() {
 
   const getHistory = useCallback(exName => {
     return Object.entries(log)
-      .flatMap(([k,v]) => { const s = v.sets && v.sets[exName]; return s && s.length ? [{date:k.split("__")[0], sets:
+      .flatMap(([k,v]) => { const s = v.sets && v.sets[exName]; return s && s.length ? [{date:k.split("__")[0], sets:s}] : []; })
+      .sort((a,b) => a.date.localeCompare(b.date));
+  }, [log]);
+
+  const getSets = useCallback((exName, numSets) => {
+    return (log[sessionKey] && log[sessionKey].sets && log[sessionKey].sets[exName]) ||
+      Array.from({length:numSets}, emptySet);
+  }, [log, sessionKey]);
+
+  const mutateSet = useCallback((exName, numSets, idx, field, value) => {
+    setLog(prev => {
+      const session = prev[sessionKey] || {sets:{}};
+      const existing = (session.sets && session.sets[exName]) || Array.from({length:numSets}, emptySet);
+      const sets = existing.map((s,i) => i===idx ? Object.assign({},s,{[field]:value}) : s);
+      const next = Object.assign({}, prev, {[sessionKey]: Object.assign({}, session, {sets: Object.assign({}, session.sets, {[exName]:sets})})});
+      persistLog(next);
+      return next;
+    });
+  }, [sessionKey]);
+
+  const toggleSet = useCallback((exName, numSets, idx) => {
+    setLog(prev => {
+      const session = prev[sessionKey] || {sets:{}};
+      const existing = (session.sets && session.sets[exName]) || Array.from({length:numSets}, emptySet);
+      const sets = existing.map((s,i) => i===idx ? Object.assign({},s,{completed:!s.completed}) : s);
+      const next = Object.assign({}, prev, {[sessionKey]: Object.assign({}, session, {sets: Object.assign({}, session.sets, {[exName]:sets})})});
+      persistLog(next);
+      return next;
+    });
+  }, [sessionKey]);
+
+  const exportCSV = () => {
+    const allEntries = Object.entries(log)
+      .filter(([,v]) => Object.keys(v.sets||{}).length > 0)
+      .sort(([a],[b]) => a.localeCompare(b));
+    if (!allEntries.length) { showToast("No data to export yet!"); return; }
+    const rows = [["Date","Workout","Exercise","Type","Set","Weight (lbs)","Reps","Completed"]];
+    allEntries.forEach(([key, session]) => {
+      const parts = key.split("__");
+      const date = parts[0];
+      const workout = parts.slice(1).join(" ");
+      Object.entries(session.sets||{}).forEach(([exName, sets]) => {
+        const type = AB_NAMES.has(exName) ? "Ab Finisher" : "Main Work";
+        (sets||[]).forEach((s, i) => {
+          rows.push([date, workout, exName, type, i+1, s.weight||"", s.reps||"", s.completed?"Yes":"No"]);
+        });
+      });
+    });
+    const csv = rows.map(r => r.map(v => '"' + String(v).replace(/"/g,'""') + '"').join(",")).join("\n");
+    const blob = new Blob([csv], {type:"text/csv"});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "dees-gym-" + todayStr() + ".csv";
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast("\u2713 CSV downloaded!");
+  };
+
+  const saveAndHome = () => {
+    persistLog(log);
+    showToast("\u2713 Session saved!");
+    setTimeout(() => setSelectedDay(null), 900);
+  };
+
+  const histEntries = Object.entries(log)
+    .filter(([,v]) => Object.keys(v.sets||{}).length > 0)
+    .sort(([a],[b]) => b.localeCompare(a))
+    .filter(([k]) => histFilter === "all" || k.includes(histFilter.slice(0,6)));
+
+  const progHistory = progEx ? getHistory(progEx).slice(-8) : [];
+  const progMax = progHistory.length ? Math.max(...progHistory.map(h => maxW(h.sets))) : 0;
+  const mainExNames = [...new Set(Object.values(PLAN).flat().map(ex => ex.name))].sort();
+  const abExNames = [...new Set(Object.values(AB_FINISHERS).flat().map(ex => ex.name))].sort();
+
+  const DAY_MAP = {
+    1: "Monday \u2014 Lower Body A",
+    2: "Tuesday \u2014 Upper Body A: Push",
+    4: "Thursday \u2014 Lower Body B",
+    5: "Friday \u2014 Upper Body B: Pull",
+    6: "Saturday \u2014 Core + Cardio",
+  };
+
+  function renderDayPicker() {
+    const isToday = selectedDate === todayStr();
+    const dow = new Date(selectedDate + "T12:00:00").getDay();
+    const matchedDay = DAY_MAP[dow];
+    const hasLog = matchedDay && Object.keys(log).some(k => k === selectedDate + "__" + matchedDay);
+
+    return e("div", null,
+      e("div", {style:{background:"var(--card)",border:"1px solid var(--border)",borderRadius:"var(--r-lg)",padding:"14px 16px",marginBottom:18,display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,flexWrap:"wrap"}},
+        e("div", null,
+          e("div", {style:{fontSize:"0.68rem",color:"var(--muted)",textTransform:"uppercase",letterSpacing:"0.5px",marginBottom:4}}, "Logging for"),
+          e("div", {style:{fontFamily:"var(--font-display)",fontSize:"1.3rem",letterSpacing:"1px",color: isToday ? "var(--accent)" : "var(--accent2)"}},
+            isToday ? "TODAY \u2014 " + fmtDate(todayStr()) : fmtDate(selectedDate)
+          )
+        ),
+        e("div", {style:{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}},
+          e("input", {type:"date", max:todayStr(), value:selectedDate,
+            onChange: ev => ev.target.value && setSelectedDate(ev.target.value),
+            style:{background:"var(--surface)",border:"1px solid var(--border)",borderRadius:"var(--r)",padding:"7px 10px",color:"var(--text)",fontFamily:"var(--font-mono)",fontSize:"0.8rem",outline:"none",cursor:"pointer",colorScheme:"dark"}}),
+          !isToday && e("button", {onClick:()=>setSelectedDate(todayStr()),
+            style:{background:"rgba(232,184,75,0.12)",border:"1px solid rgba(232,184,75,0.3)",borderRadius:"var(--r)",padding:"7px 12px",color:"var(--accent)",fontSize:"0.75rem",cursor:"pointer",fontFamily:"var(--font-body)",whiteSpace:"nowrap"}},
+            "Back to Today")
+        )
+      ),
+      !matchedDay && e("div", {style:{background:"var(--card)",border:"1px solid var(--border)",borderRadius:"var(--r-lg)",padding:"32px 24px",textAlign:"center"}},
+        e("div", {style:{fontSize:"2.2rem",marginBottom:10}}, "\uD83D\uDCA4"),
+        e("div", {style:{fontFamily:"var(--font-display)",fontSize:"1.4rem",letterSpacing:"1px",color:"var(--muted)",marginBottom:8}}, "Rest Day"),
+        e("div", {style:{fontSize:"0.82rem",color:"var(--muted)",lineHeight:1.6}}, "No workout scheduled for " + new Date(selectedDate+"T12:00:00").toLocaleDateString("en-US",{weekday:"long"}) + ". Recovery is part of the plan!"),
+        e("div", {style:{fontSize:"0.75rem",color:"var(--muted)",marginTop:10}}, "Check \uD83D\uDCC5 Weekly to see the full schedule.")
+      ),
+      matchedDay && e("div", null,
+        e("div", {style:{fontSize:"0.72rem",color:"var(--muted)",textTransform:"uppercase",letterSpacing:"0.5px",marginBottom:10}}, isToday ? "Today's Workout" : "Workout for this day"),
+        e("div", {className:"day-card", onClick:()=>setSelectedDay(matchedDay), style:{cursor:"pointer"}},
+          hasLog && e("div", {className:"day-card-badge"}),
+          e("div", {className:"day-card-name"}, matchedDay.split("\u2014")[0].trim()),
+          e("div", {className:"day-card-sub"}, (matchedDay.split("\u2014")[1]||"").trim()),
+          e("div", {style:{marginTop:6,fontSize:"0.68rem",color: hasLog ? "var(--green)" : "var(--muted)"}},
+            hasLog ? "\u2713 logged \u2014 tap to review" : PLAN[matchedDay].length + " exercises + " + (AB_FINISHERS[matchedDay]||[]).length + " ab finishers \u2014 tap to log"
+          )
+        )
+      )
+    );
+  }
+
+  function renderWeekly() {
+    return e("div", null,
+      e("div", {style:{fontSize:"0.72rem",color:"var(--muted)",textTransform:"uppercase",letterSpacing:"0.5px",marginBottom:14}}, "Weekly Schedule"),
+      e("div", {className:"day-grid"},
+        ...Object.keys(PLAN).map(day => {
+          const logs = Object.keys(log).filter(k => k.endsWith("__" + day)).sort().reverse();
+          const lastDate = logs.length ? logs[0].split("__")[0] : null;
+          return e("div", {key:day, className:"day-card", style:{cursor:"default"}},
+            e("div", {className:"day-card-name"}, day.split("\u2014")[0].trim()),
+            e("div", {className:"day-card-sub"}, (day.split("\u2014")[1]||"").trim()),
+            e("div", {style:{marginTop:8,fontSize:"0.68rem",color:"var(--muted)"}},
+              PLAN[day].length + " ex + " + (AB_FINISHERS[day]||[]).length + " abs"
+            ),
+            lastDate && e("div", {style:{marginTop:5,fontSize:"0.68rem",color:"var(--green)"}},
+              "\u2713 Last: " + fmtDate(lastDate)
+            )
+          );
+        })
+      ),
+      e("div", {style:{marginTop:4,padding:"14px 16px",background:"var(--card)",border:"1px solid var(--border)",borderRadius:"var(--r-lg)",fontSize:"0.8rem",color:"var(--muted)",lineHeight:1.8}},
+        e("strong",{style:{color:"var(--text)",display:"block",marginBottom:4}}, "Schedule"),
+        "Mon: Lower Body A \u00B7 Tue: Upper Push \u00B7 Wed: Rest",
+        e("br"),
+        "Thu: Lower Body B \u00B7 Fri: Upper Pull \u00B7 Sat: Core + Cardio \u00B7 Sun: Rest"
+      )
+    );
+  }
+
+  function renderSession() {
+    const isToday = selectedDate === todayStr();
+    const dayLabel = selectedDay.split("\u2014");
+    const abs = AB_FINISHERS[selectedDay];
+    return e("div", null,
+      e("div", {style:{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:18,flexWrap:"wrap",gap:10}},
+        e("div", null,
+          e("div", {style:{fontFamily:"var(--font-display)",fontSize:"1.6rem",letterSpacing:"1px",color:"var(--text)"}}, dayLabel[0]),
+          e("div", {style:{display:"flex",alignItems:"center",gap:6,marginTop:2}},
+            e("span", {style:{fontSize:"0.75rem",color:"var(--muted)"}}, (dayLabel[1]||"").trim() + " \u00B7 " + fmtDate(selectedDate)),
+            !isToday && e("span", {style:{fontSize:"0.68rem",color:"var(--accent2)",fontFamily:"var(--font-mono)",background:"rgba(91,156,246,0.12)",border:"1px solid rgba(91,156,246,0.3)",borderRadius:4,padding:"1px 6px"}}, "PAST")
+          )
+        ),
+        e("button", {className:"back-btn", onClick:()=>setSelectedDay(null)}, "\u2190 Days")
+      ),
+      e("div", {className:"section-divider"},
+        e("div",{className:"section-divider-line"}),
+        e("span",{className:"section-label-main"},"Main Work"),
+        e("div",{className:"section-divider-line"})
+      ),
+      ...PLAN[selectedDay].map(ex =>
+        e(ExerciseCard, {key:ex.name, ex, sets:getSets(ex.name,ex.sets),
+          onUpdate:(i,f,v)=>mutateSet(ex.name,ex.sets,i,f,v),
+          onToggle:i=>toggleSet(ex.name,ex.sets,i),
+          history:getHistory(ex.name), isAb:false})
+      ),
+      abs && e("div",{className:"section-divider"},
+        e("div",{className:"section-divider-line"}),
+        e("span",{className:"section-label-abs"},"Ab Finisher"),
+        e("div",{className:"section-divider-line"})
+      ),
+      abs && abs.map(ex =>
+        e(ExerciseCard, {key:ex.name, ex, sets:getSets(ex.name,ex.sets),
+          onUpdate:(i,f,v)=>mutateSet(ex.name,ex.sets,i,f,v),
+          onToggle:i=>toggleSet(ex.name,ex.sets,i),
+          history:getHistory(ex.name), isAb:true})
+      ),
+      e("div", {style:{position:"sticky",bottom:20,paddingTop:14}},
+        e("button", {className:"save-btn", onClick:saveAndHome}, "SAVE & FINISH")
+      )
+    );
+  }
+
+  function renderHistory() {
+    return e("div", null,
+      e("div", {style:{display:"flex",gap:8,marginBottom:18,flexWrap:"wrap"}},
+        e("button", {className:"filter-btn" + (histFilter==="all"?" active":""), onClick:()=>setHistFilter("all")}, "All"),
+        ...Object.keys(PLAN).map(d =>
+          e("button", {key:d, className:"filter-btn" + (histFilter===d.slice(0,6)?" active":""),
+            onClick:()=>setHistFilter(d.slice(0,6))}, d.split("\u2014")[0].trim())
+        )
+      ),
+      histEntries.length > 0 && e("div", {style:{marginBottom:16,display:"flex",justifyContent:"flex-end"}},
+        e("button", {onClick:exportCSV, style:{display:"flex",alignItems:"center",gap:7,background:"rgba(76,175,125,0.12)",border:"1px solid rgba(76,175,125,0.4)",borderRadius:"var(--r)",padding:"8px 16px",color:"var(--green)",fontSize:"0.8rem",fontWeight:600,cursor:"pointer",fontFamily:"var(--font-body)"}},
+          e("span",{style:{fontSize:"1rem"}},"\u2B07\uFE0F"), " Export to CSV"
+        )
+      ),
+      histEntries.length === 0
+        ? e("div", {className:"empty-state"}, e("div",{className:"empty-icon"},"\uD83D\uDCCB"), "No sessions logged yet.")
+        : histEntries.map(([key, session]) => {
+          const parts = key.split("__");
+          const date = parts[0];
+          const dayName = parts.slice(1).join(" ");
+          const isOpen = histExp[key];
+          const exercises = Object.entries(session.sets||{}).filter(([,s]) => s.length > 0);
+          return e("div", {key, style:{background:"var(--card)",border:"1px solid var(--border)",borderRadius:"var(--r-lg)",marginBottom:12,overflow:"hidden"}},
+            e("div", {style:{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"14px 16px",cursor:"pointer"},
+              onClick:()=>setHistExp(p => Object.assign({},p,{[key]:!p[key]}))},
+              e("div", null,
+                e("div", {style:{fontFamily:"var(--font-display)",fontSize:"1.1rem",letterSpacing:"1px",color:"var(--accent2)"}}, fmtDate(date)),
+                e("div", {style:{fontSize:"0.75rem",color:"var(--muted)",marginTop:2}}, dayName + " \u00B7 " + exercises.length + " exercises")
+              ),
+              e("span", {style:{color:"var(--muted)",fontSize:"0.75rem"}}, isOpen ? "\u25B2" : "\u25BC")
+            ),
+            isOpen && e("div", {style:{padding:"0 16px 14px"}},
+              ...exercises.map(([exName, sets]) =>
+                e("div", {key:exName, style:{display:"flex",alignItems:"flex-start",justifyContent:"space-between",padding:"8px 0",borderBottom:"1px solid var(--border)",gap:12}},
+                  e("div", null,
+                    e("div", {style:{display:"flex",alignItems:"center",gap:6}},
+                      AB_NAMES.has(exName) && e("span",{style:{fontSize:"0.6rem",color:"var(--green)",fontFamily:"var(--font-mono)",background:"rgba(76,175,125,0.1)",border:"1px solid rgba(76,175,125,0.3)",borderRadius:3,padding:"1px 5px"}},"ABS"),
+                      e("span", {style:{fontSize:"0.82rem",color:"var(--text)",fontWeight:500}}, exName)
+                    ),
+                    e("div", {style:{fontSize:"0.72rem",color:"var(--muted)",fontFamily:"var(--font-mono)",marginTop:3}},
+                      sets.map((s,i) => "S"+(i+1)+": "+(s.weight||"\u2014")+"lbs\u00D7"+(s.reps||"\u2014")).join(" \u00B7 ")
+                    )
+                  ),
+                  maxW(sets) > 0 && e("div",{style:{fontSize:"0.78rem",color:"var(--green)",fontFamily:"var(--font-mono)",whiteSpace:"nowrap"}}, maxW(sets)+" lbs")
+                )
+              )
+            )
+          );
+        })
+    );
+  }
+
+  function renderProgress() {
+    return e("div", null,
+      e("div", {style:{marginBottom:20}},
+        e("div", {style:{fontSize:"0.72rem",color:"var(--muted)",textTransform:"uppercase",letterSpacing:"0.5px",marginBottom:6}}, "Select Exercise"),
+        e("select", {className:"styled-select", value:progEx, onChange:ev=>setProgEx(ev.target.value)},
+          e("option", {value:""}, "\u2014 Choose an exercise \u2014"),
+          e("optgroup", {label:"\u2500\u2500 Main Work \u2500\u2500"},
+            ...mainExNames.map(ex => e("option",{key:ex,value:ex},ex))
+          ),
+          e("optgroup", {label:"\u2500\u2500 Ab Finishers \u2500\u2500"},
+            ...abExNames.map(ex => e("option",{key:ex,value:ex},ex))
+          )
+        )
+      ),
+      !progEx && e("div",{className:"empty-state"},e("div",{className:"empty-icon"},"\uD83D\uDCC8"),"Select an exercise to see your progression."),
+      progEx && progHistory.length===0 && e("div",{className:"empty-state"},e("div",{className:"empty-icon"},"\uD83C\uDFD7\uFE0F"),"No data yet for ",e("strong",null,progEx),"."),
+      progEx && progHistory.length > 0 && e("div", null,
+        e("div",{className:"stat-row"},
+          e("div",{className:"stat-card"},e("div",{className:"stat-val gold"},progMax),e("div",{className:"stat-label"},"Max (lbs)")),
+          e("div",{className:"stat-card"},e("div",{className:"stat-val blue"},progHistory.length),e("div",{className:"stat-label"},"Sessions")),
+          e("div",{className:"stat-card"},
+            e("div",{className:"stat-val green"}, progHistory.length>=2 ? "+"+Math.max(0,maxW(progHistory[progHistory.length-1].sets)-maxW(progHistory[0].sets)) : "\u2014"),
+            e("div",{className:"stat-label"},"Total Gain")
+          )
+        ),
+        e("div",{style:{background:"var(--card)",border:"1px solid var(--border)",borderRadius:"var(--r-lg)",padding:18,marginBottom:16}},
+          e("div",{style:{fontSize:"0.7rem",color:"var(--muted)",textTransform:"uppercase",letterSpacing:"0.5px",marginBottom:14}},"Max Weight Per Session"),
+          e("div",{className:"chart-bars"},
+            ...progHistory.map((h,i) => {
+              const w = maxW(h.sets);
+              const pct = progMax > 0 ? (w/progMax)*100 : 0;
+              return e("div",{key:i,className:"chart-bar-wrap"},
+                e("div",{className:"chart-bar"+(i===progHistory.length-1?" latest":""),style:{height:Math.max(pct,4)+"%"}},
+                  e("span",{className:"chart-bar-val"},w)
+                ),
+                e("div",{className:"chart-bar-label"},fmtDate(h.date).split(",")[0])
+              );
+            })
+          )
+        ),
+        (() => {
+          const reco = getReco(progHistory);
+          return reco
+            ? e("div",{style:{background:"rgba(232,184,75,0.1)",border:"1px solid rgba(232,184,75,0.4)",borderRadius:"var(--r-lg)",padding:"16px 18px"}},
+                e("div",{style:{fontSize:"0.7rem",color:"var(--accent)",textTransform:"uppercase",letterSpacing:"0.5px",marginBottom:6}},"Progressive Overload Recommendation"),
+                e("div",{style:{fontSize:"0.9rem",color:"var(--text)",lineHeight:1.5}},reco.msg),
+                e("div",{style:{marginTop:8,fontFamily:"var(--font-mono)",fontSize:"0.85rem",color:"var(--accent)"}},"Next target: ",e("strong",null,reco.suggested+" lbs"))
+              )
+            : e("div",{style:{background:"var(--card)",border:"1px solid var(--border)",borderRadius:"var(--r-lg)",padding:"16px 18px",fontSize:"0.82rem",color:"var(--muted)",lineHeight:1.6}},
+                e("strong",{style:{color:"var(--text)"}},"How overload works:"),e("br"),
+                "Complete 2 sessions with all sets marked \u2713 Done to unlock a weight increase recommendation."
+              );
+        })()
+      )
+    );
+  }
+
+  return e("div", null,
+    e("div", {className:"app"},
+      e("div", {className:"header"},
+        e("div", null,
+          e("div", {className:"header-title"}, "DEE'S GYM"),
+          e("div", {className:"header-sub"}, "Progressive Overload Tracker")
+        ),
+        e("div", {className:"date-badge"}, fmtDate(todayStr()))
+      ),
+      e("div", {className:"nav"},
+        ...([["workout","\uD83C\uDFCB\uFE0F Log"],["weekly","\uD83D\uDCC5 Weekly"],["history","\uD83D\uDCCB History"],["progress","\uD83D\uDCC8 Progress"]].map(([id,lbl]) =>
+          e("button", {key:id, className:"nav-btn"+(tab===id?" active":""),
+            onClick:()=>{setTab(id);setSelectedDay(null);}}, lbl)
+        ))
+      ),
+      tab==="workout" && !selectedDay && renderDayPicker(),
+      tab==="workout" && selectedDay && renderSession(),
+      tab==="weekly" && renderWeekly(),
+      tab==="history" && renderHistory(),
+      tab==="progress" && renderProgress()
+    ),
+    e("div", {className:"toast"+(toast?" show":"")}, toast)
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(e(App));
+</script>
+</body>
+</html>
