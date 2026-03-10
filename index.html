@@ -296,21 +296,53 @@ function App() {
   }, [sessionKey]);
 
   const exportCSV = () => {
-    const allEntries = Object.entries(log).filter(([,v]) => Object.keys(v.sets||{}).length > 0).sort(([a],[b]) => a.localeCompare(b));
-    if (!allEntries.length) { showToast("No data to export yet!"); return; }
-    const rows = [["Date","Workout","Exercise","Type","Set","Weight (lbs)","Reps","Completed"]];
+    const allEntries = Object.entries(log)
+      .filter(([,v]) => Object.keys(v.sets||{}).length > 0)
+      .sort(([a],[b]) => a.localeCompare(b));
+    const macroData = (() => { try { const v = localStorage.getItem("dee-macros-v1"); return v ? JSON.parse(v) : {}; } catch { return {}; } })();
+    const macroEntries = Object.entries(macroData).sort(([a],[b]) => a.localeCompare(b));
+    if (!allEntries.length && !macroEntries.length) { showToast("No data to export yet!"); return; }
+
+    // Workout section
+    const rows = [["WORKOUT LOG","","","","","","",""]];
+    rows.push(["Date","Workout","Exercise","Type","Set","Weight (lbs)","Reps","Completed"]);
     allEntries.forEach(([key, session]) => {
-      const parts = key.split("__"); const date = parts[0]; const workout = parts.slice(1).join(" ");
+      const parts = key.split("__");
+      const date = parts[0];
+      const workout = parts.slice(1).join(" ");
       Object.entries(session.sets||{}).forEach(([exName, sets]) => {
         const type = AB_NAMES.has(exName) ? "Ab Finisher" : "Main Work";
-        (sets||[]).forEach((s, i) => { rows.push([date, workout, exName, type, i+1, s.weight||"", s.reps||"", s.completed?"Yes":"No"]); });
+        (sets||[]).forEach((s, i) => {
+          rows.push([date, workout, exName, type, i+1, s.weight||"", s.reps||"", s.completed?"Yes":"No"]);
+        });
       });
     });
+
+    // Spacer
+    rows.push(["","","","","","","",""]);
+    rows.push(["","","","","","","",""]);
+
+    // Nutrition section
+    rows.push(["NUTRITION LOG","","","","","","",""]);
+    rows.push(["Date","Food","Calories","Protein (g)","Water (bottles)","","",""]);
+    macroEntries.forEach(([date, dayData]) => {
+      (dayData.entries||[]).forEach(x => {
+        rows.push([date, x.name, x.kcal||0, x.protein||0, "","","",""]);
+      });
+      if ((dayData.water||0) > 0) {
+        rows.push([date, "-- Water total --", "", "", dayData.water+" bottle(s) ("+(dayData.water*18)+"oz)","","",""]);
+      }
+    });
+
     const csv = rows.map(r => r.map(v => '"' + String(v).replace(/"/g,'""') + '"').join(",")).join("\n");
     const blob = new Blob([csv], {type:"text/csv"});
     const url = URL.createObjectURL(blob);
-    const a = document.createElement("a"); a.href = url; a.download = "dees-gym-" + todayStr() + ".csv"; a.click();
-    URL.revokeObjectURL(url); showToast("\u2713 CSV downloaded!");
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "dees-gym-" + todayStr() + ".csv";
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast("\u2713 CSV downloaded!");
   };
 
   const saveAndHome = () => { persistLog(log); showToast("\u2713 Session saved!"); setTimeout(() => setSelectedDay(null), 900); };
