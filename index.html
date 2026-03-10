@@ -303,7 +303,6 @@ function App() {
     const macroEntries = Object.entries(macroData).sort(([a],[b]) => a.localeCompare(b));
     if (!allEntries.length && !macroEntries.length) { showToast("No data to export yet!"); return; }
 
-    // Workout section
     const rows = [["WORKOUT LOG","","","","","","",""]];
     rows.push(["Date","Workout","Exercise","Type","Set","Weight (lbs)","Reps","Completed"]);
     allEntries.forEach(([key, session]) => {
@@ -318,11 +317,8 @@ function App() {
       });
     });
 
-    // Spacer
     rows.push(["","","","","","","",""]);
     rows.push(["","","","","","","",""]);
-
-    // Nutrition section
     rows.push(["NUTRITION LOG","","","","","","",""]);
     rows.push(["Date","Food","Calories","Protein (g)","Water (bottles)","","",""]);
     macroEntries.forEach(([date, dayData]) => {
@@ -557,7 +553,7 @@ function App() {
   function saveFavs(favs) { try{localStorage.setItem("dee-favs-v1",JSON.stringify(favs));}catch{} }
 
   function MacrosTab(props) {
-    const { dateStr } = props;
+    const { dateStr, onDateChange, todayString } = props;
     const [macroLog, setMacroLog] = React.useState(() => loadMacros());
     const [favs, setFavs] = React.useState(() => loadFavs());
     const [showManual, setShowManual] = React.useState(false);
@@ -618,7 +614,21 @@ function App() {
         e("div",{style:{display:"flex",gap:10,justifyContent:"center",marginTop:6}},...bottles)
       );
     }
+    const isMacroToday = dateStr === todayString;
     return e("div", null,
+      // Date picker (mirrors workout tab)
+      e("div",{style:{background:"var(--card)",border:"1px solid var(--border)",borderRadius:"var(--r-lg)",padding:"14px 16px",marginBottom:16,display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,flexWrap:"wrap"}},
+        e("div",null,
+          e("div",{style:{fontSize:"0.68rem",color:"var(--muted)",textTransform:"uppercase",letterSpacing:"0.5px",marginBottom:4}},"Logging for"),
+          e("div",{style:{fontFamily:"var(--font-display)",fontSize:"1.3rem",letterSpacing:"1px",color:isMacroToday?"var(--accent)":"var(--accent2)"}},
+            isMacroToday?"TODAY \u2014 "+fmtDate(todayString):fmtDate(dateStr))
+        ),
+        e("div",{style:{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}},
+          e("input",{type:"date",max:todayString,value:dateStr,onChange:ev=>ev.target.value&&onDateChange(ev.target.value),style:{background:"var(--surface)",border:"1px solid var(--border)",borderRadius:"var(--r)",padding:"7px 10px",color:"var(--text)",fontFamily:"var(--font-mono)",fontSize:"0.8rem",outline:"none",cursor:"pointer",colorScheme:"dark"}}),
+          !isMacroToday&&e("button",{onClick:()=>onDateChange(todayString),style:{background:"rgba(232,184,75,0.12)",border:"1px solid rgba(232,184,75,0.3)",borderRadius:"var(--r)",padding:"7px 12px",color:"var(--accent)",fontSize:"0.75rem",cursor:"pointer",fontFamily:"var(--font-body)",whiteSpace:"nowrap"}},"Back to Today")
+        )
+      ),
+      // Daily summary
       e("div",{style:{background:"var(--card)",border:"1px solid var(--border)",borderRadius:"var(--r-lg)",padding:"16px",marginBottom:16}},
         e("div",{style:{fontSize:"0.72rem",color:"var(--muted)",textTransform:"uppercase",letterSpacing:"0.5px",marginBottom:12}},"Daily Summary"),
         ProgressBar("Calories",totKcal,MACRO_TARGETS.kcal,"var(--accent)","kcal"),
@@ -685,7 +695,7 @@ function App() {
     );
   }
 
-  function renderMacros() { return e(MacrosTab, { dateStr: selectedDate }); }
+  function renderMacros() { return e(MacrosTab, { dateStr: selectedDate, onDateChange: setSelectedDate, todayString: todayStr() }); }
 
   return e("div", null,
     e("div",{className:"app"},
